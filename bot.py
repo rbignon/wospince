@@ -3,6 +3,7 @@ import logging
 import os
 import random
 import sqlite3
+import sys
 
 import asqlite
 import pygame
@@ -10,7 +11,11 @@ import twitchio
 from twitchio import eventsub
 from twitchio.ext import commands
 
-from conf import BOT_ID, CLIENT_ID, CLIENT_SECRET, OWNER_ID
+try:
+    from conf import BOT_ID, CLIENT_ID, CLIENT_SECRET, OWNER_ID
+except ImportError:
+    print("Rename conf.py.example to conf.py and complete it.")
+    sys.exit(1)
 
 LOGGER: logging.Logger = logging.getLogger("Bot")
 
