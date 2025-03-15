@@ -1,0 +1,6 @@
+# rename it to conf.py
+
+CLIENT_ID: str = ""
+CLIENT_SECRET: str = ""
+BOT_ID = ""
+OWNER_ID = ""
