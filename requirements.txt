@@ -1,0 +1,3 @@
+git+https://github.com/PythonistaGuild/TwitchIO.git
+pygame
+asqlite
