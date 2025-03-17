@@ -143,6 +143,7 @@ class LaClasse(commands.Component):
         # Keep in mind we are assuming this is for ourselves
         # others may not want your bot randomly sending messages...
         await payload.broadcaster.send_message(
+            sender=self.bot.bot_id,
             message=f"OMG {payload.broadcaster} est live !",
         )
 
@@ -169,8 +170,11 @@ class LaClasse(commands.Component):
 def main() -> None:
     twitchio.utils.setup_logging(level=logging.DEBUG)
 
+    pygame.init()
+    pygame.display.set_caption("wospince")
+    screen = pygame.display.set_mode((1280, 720))
+
     async def runner() -> None:
-        pygame.mixer.init()
         async with asqlite.create_pool("tokens.db") as tdb, Bot(
             token_database=tdb
         ) as bot:
@@ -181,6 +185,8 @@ def main() -> None:
         asyncio.run(runner())
     except KeyboardInterrupt:
         LOGGER.warning("Shutting down due to KeyboardInterrupt...")
+
+    pygame.quit()
 
 
 if __name__ == "__main__":
