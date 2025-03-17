@@ -4,6 +4,7 @@ import os
 import random
 import sqlite3
 import sys
+import time
 
 import asqlite
 import pygame
@@ -18,6 +19,8 @@ except ImportError:
     sys.exit(1)
 
 LOGGER: logging.Logger = logging.getLogger("Bot")
+FPS = 30
+running = True
 
 
 class Bot(commands.Bot):
@@ -167,27 +170,66 @@ class LaClasse(commands.Component):
             )
 
 
-def main() -> None:
+async def bot_runner() -> None:
+    async with asqlite.create_pool("tokens.db") as tdb, Bot(token_database=tdb) as bot:
+        await bot.setup_database()
+        await bot.start()
+
+
+def pygame_loop():
+    screen = pygame.display.set_mode((1280, 720))
+    black = 0, 0, 0
+    current_time = 0
+
+    while running:
+        for event in pygame.event.get():
+            handle_event(event)
+
+        last_time, current_time = current_time, time.time()
+        # call usually takes  a bit longer than ideal for framerate, so subtract from next wait
+        # sleeptime = 1/FPS - delayed = 1/FPS - (now-last-1/FPS)
+        # also limit max delay to avoid issues with asyncio.sleep() returning immediately for negative values
+        waiting_time = max(
+            min(1 / FPS - (current_time - last_time - 1 / FPS), 1 / FPS), 0
+        )
+        # print("WAIT", waiting_time)
+        time.sleep(waiting_time)  # tick
+        screen.fill(black)
+        pygame.display.flip()
+
+
+def handle_event(event):
+    if event.type == pygame.QUIT:
+        global running
+        running = False
+    else:
+        print("handle_event", event)
+
+
+async def main() -> None:
     twitchio.utils.setup_logging(level=logging.DEBUG)
+
+    event_queue = asyncio.Queue()
 
     pygame.init()
     pygame.display.set_caption("wospince")
-    screen = pygame.display.set_mode((1280, 720))
 
-    async def runner() -> None:
-        async with asqlite.create_pool("tokens.db") as tdb, Bot(
-            token_database=tdb
-        ) as bot:
-            await bot.setup_database()
-            await bot.start()
+    loop = asyncio.get_event_loop()
+
+    pygame_task = loop.run_in_executor(None, pygame_loop)
 
     try:
-        asyncio.run(runner())
-    except KeyboardInterrupt:
-        LOGGER.warning("Shutting down due to KeyboardInterrupt...")
+        await bot_runner()
+    finally:
+        print("bye")
+        global running
+        running = False
 
-    pygame.quit()
+        pygame.quit()
 
 
 if __name__ == "__main__":
-    main()
+    try:
+        asyncio.run(main())
+    except KeyboardInterrupt:
+        LOGGER.warning("Shutting down due to KeyboardInterrupt...")
