@@ -1,10 +1,12 @@
 import asyncio
 import logging
 import os
+import queue
 import random
 import sqlite3
 import sys
 import time
+from pathlib import Path
 
 import asqlite
 import pygame
@@ -24,19 +26,12 @@ running = True
 
 
 class Bot(commands.Bot):
-    rewards = {}
-
-    @classmethod
-    def reward(cls, id_: str):
-        def inner(func):
-            cls.rewards[id_] = func
-
-            return func
-
-        return inner
-
-    def __init__(self, *, token_database: asqlite.Pool) -> None:
+    def __init__(
+        self, overlay_queue: queue.Queue, *, token_database: asqlite.Pool
+    ) -> None:
+        self.overlay_queue = overlay_queue
         self.token_database = token_database
+
         super().__init__(
             client_id=CLIENT_ID,
             client_secret=CLIENT_SECRET,
@@ -45,6 +40,15 @@ class Bot(commands.Bot):
             prefix="!",
             scopes=twitchio.Scopes.all(),
         )
+
+    @classmethod
+    async def run(cls, overlay_queue: queue.Queue) -> None:
+        async with (
+            asqlite.create_pool("tokens.db") as tdb,
+            cls(overlay_queue, token_database=tdb) as bot,
+        ):
+            await bot.setup_database()
+            await bot.start()
 
     async def setup_hook(self) -> None:
         if len(self.tokens) < 2:
@@ -114,13 +118,13 @@ class Bot(commands.Bot):
 
 
 class LaClasse(commands.Component):
-    def __init__(self, bot):
+    def __init__(self, bot: Bot):
         super().__init__()
 
         self.bot = bot
         self.sounds = []
 
-        for filename in os.listdir("sounds"):
+        for filename in os.listdir(Path("sounds") / "lca"):
             self.sounds.append(filename.split(".")[0])
 
     @commands.Component.listener()
@@ -136,96 +140,129 @@ class LaClasse(commands.Component):
             keywords.add(random.choice(self.sounds))
 
         await ctx.reply(
-            f'Tiens, tu peux utiliser la récompense de chaîne avec un mot clef parmi ceux-ci : {", ".join(keywords)}'
+            f'Tiens, voici quelques mots clefs que tu peux utiliser avec la récompense de chaîne : {", ".join(keywords)}'
         )
 
     @commands.Component.listener()
     async def event_stream_online(self, payload: twitchio.StreamOnline) -> None:
-        # Event dispatched when a user goes live from the subscription we made above...
-
-        # Keep in mind we are assuming this is for ourselves
-        # others may not want your bot randomly sending messages...
         await payload.broadcaster.send_message(
             sender=self.bot.bot_id,
             message=f"OMG {payload.broadcaster} est live !",
         )
 
-    @commands.Component.listener()
-    async def event_custom_redemption_add(
-        self, payload: twitchio.ChannelPointsAutoRedeemAdd
+    @commands.reward_command(
+        id="037bf6eb-228b-4972-a212-8128bb8c8391",
+        invoke_when=commands.RewardStatus.unfulfilled,
+    )
+    async def reward_laclasse(
+        self, ctx: commands.Context, *, keyword: str | None = None
     ) -> None:
-        if payload.reward.id in Bot.rewards:
-            await Bot.rewards[payload.reward.id](self, payload)
-
-    @Bot.reward("d138869e-77d1-4fc6-8ae7-5106817b7747")
-    async def play_sound(self, payload: twitchio.ChannelPointsAutoRedeemAdd) -> None:
-        keyword = payload.user_input
         if keyword in self.sounds:
-            pygame.mixer.music.load(f"sounds/{keyword}.mp3")
+            pygame.mixer.music.load(Path("sounds") / "lca" / f"{keyword}.mp3")
             pygame.mixer.music.play()
+            await ctx.redemption.fulfill(token_for=ctx.broadcaster)
         else:
-            await payload.broadcaster.send_message(
-                sender=self.bot.bot_id,
-                message=f"Déso, mais il n'y a pas de référence à {keyword}. Utilise la commande !classe.",
+            await ctx.redemption.refund(token_for=ctx.broadcaster)
+            await ctx.send(
+                f"Déso, mais il n'y a pas de référence à {keyword}. Utilise la commande !classe."
             )
 
-
-async def bot_runner() -> None:
-    async with asqlite.create_pool("tokens.db") as tdb, Bot(token_database=tdb) as bot:
-        await bot.setup_database()
-        await bot.start()
-
-
-def pygame_loop():
-    screen = pygame.display.set_mode((1280, 720))
-    black = 0, 0, 0
-    current_time = 0
-
-    while running:
-        for event in pygame.event.get():
-            handle_event(event)
-
-        last_time, current_time = current_time, time.time()
-        # call usually takes  a bit longer than ideal for framerate, so subtract from next wait
-        # sleeptime = 1/FPS - delayed = 1/FPS - (now-last-1/FPS)
-        # also limit max delay to avoid issues with asyncio.sleep() returning immediately for negative values
-        waiting_time = max(
-            min(1 / FPS - (current_time - last_time - 1 / FPS), 1 / FPS), 0
+    @commands.command()
+    @commands.is_owner()
+    async def create_reward(self, ctx: commands.Context) -> None:
+        resp = await ctx.broadcaster.create_custom_reward(
+            f"New reward {random.randint(0, 99999)}", cost=10
         )
-        # print("WAIT", waiting_time)
-        time.sleep(waiting_time)  # tick
+        await ctx.send(f"Created your redemption: {resp.id}")
+
+
+class Overlay:
+    def __init__(self, event_queue):
+        self.event_queue = event_queue
+        self.running = True
+
+    def init(self):
+        pygame.init()
+        pygame.display.set_caption("wospince")
+
+    def stop(self):
+        self.running = False
+
+    def exit(self):
+        pygame.quit()
+
+    def handle_bot_events(self):
+        try:
+            while True:
+                event = self.event_queue.get_nowait()
+                self.handle_bot_event(*event)
+                self.event_queue.task_done()
+        except queue.Empty:
+            pass
+        except queue.ShutDown:
+            self.running = False
+
+    def handle_bot_event(self, event_type, *args):
+        match event_type:
+            case _:
+                print("handle_bot_event", event_type, args)
+
+    def handle_screen_event(self, event):
+        match event.type:
+            case pygame.QUIT | pygame.WINDOWCLOSE:
+                print("stop running")
+                self.running = False
+            case pygame.MOUSEMOTION:
+                pass
+            case _:
+                print("handle_screen_event", event)
+
+    def run(self):
+        screen = pygame.display.set_mode((1280, 720))
+        current_time = 0
+
+        while self.running:
+            self.handle_bot_events()
+
+            for event in pygame.event.get():
+                self.handle_screen_event(event)
+
+            last_time, current_time = current_time, time.time()
+            # call usually takes  a bit longer than ideal for framerate, so subtract from next wait
+            # sleeptime = 1/FPS - delayed = 1/FPS - (now-last-1/FPS)
+            # also limit max delay to avoid issues with asyncio.sleep() returning immediately for negative values
+            waiting_time = max(
+                min(1 / FPS - (current_time - last_time - 1 / FPS), 1 / FPS), 0
+            )
+            time.sleep(waiting_time)  # tick
+
+            self.draw_window(screen)
+
+        self.exit()
+
+    def draw_window(self, screen):
+        black = 0, 0, 0
         screen.fill(black)
         pygame.display.flip()
-
-
-def handle_event(event):
-    if event.type == pygame.QUIT:
-        global running
-        running = False
-    else:
-        print("handle_event", event)
 
 
 async def main() -> None:
     twitchio.utils.setup_logging(level=logging.DEBUG)
 
-    event_queue = asyncio.Queue()
+    event_queue = queue.Queue()
 
-    pygame.init()
-    pygame.display.set_caption("wospince")
+    overlay = Overlay(event_queue)
+    overlay.init()
 
     loop = asyncio.get_event_loop()
 
-    pygame_task = loop.run_in_executor(None, pygame_loop)
+    overlay_task = loop.run_in_executor(None, overlay.run)
 
     try:
-        await bot_runner()
+        await Bot.run(event_queue)
     finally:
-        print("bye")
-        global running
-        running = False
-
-        pygame.quit()
+        overlay.stop()
+        await asyncio.wait([overlay_task])
 
 
 if __name__ == "__main__":
