@@ -183,6 +183,7 @@ class LaClasse(commands.Component):
         id="5b6d55ef-c0cb-4b63-8dca-fb587bf4644f",
         invoke_when=commands.RewardStatus.unfulfilled,
     )
+    @commands.cooldown(rate=1, per=30, key=commands.BucketType.chatter)
     async def reward_gl(self, ctx: commands.Context) -> None:
         sound = random.choice(self.sounds["gl"])
         self.bot.overlay_queue.put(
@@ -190,10 +191,23 @@ class LaClasse(commands.Component):
         )
         await ctx.redemption.fulfill(token_for=ctx.broadcaster)
 
+    @reward_gl.error
+    async def reward_gl_error(self, error: commands.CommandErrorPayload):
+        if isinstance(error.exception, commands.exceptions.CommandOnCooldown):
+            await error.context.redemption.refund(token_for=error.context.broadcaster)
+            await error.context.send(
+                f"{error.context.chatter.mention} évite de spammer les récompenses de chaîne owaCosmique"
+            )
+            # await self.bot.user.send_whisper(
+            #    to_user=error.context.chatter,
+            #    message="Yo, évite de spammer les récompenses de chaîne !"
+            # )
+
     @commands.reward_command(
         id="7e4e814b-3623-43a3-b59a-530400be0db7",
         invoke_when=commands.RewardStatus.unfulfilled,
     )
+    @commands.cooldown(rate=1, per=30, key=commands.BucketType.chatter)
     async def reward_fail(self, ctx: commands.Context) -> None:
         sound = random.choice(self.sounds["fail"])
         self.bot.overlay_queue.put(
@@ -201,16 +215,33 @@ class LaClasse(commands.Component):
         )
         await ctx.redemption.fulfill(token_for=ctx.broadcaster)
 
+    @reward_gl.error
+    async def reward_fail_error(self, error: commands.CommandErrorPayload):
+        if isinstance(error.exception, commands.exceptions.CommandOnCooldown):
+            await error.context.redemption.refund(token_for=error.context.broadcaster)
+            await error.context.send(
+                f"{error.context.chatter.mention} évite de spammer les récompenses de chaîne owaCosmique"
+            )
+
     @commands.reward_command(
         id="6091d470-96de-43ed-9be6-fcf17d145e81",
         invoke_when=commands.RewardStatus.unfulfilled,
     )
+    @commands.cooldown(rate=1, per=30, key=commands.BucketType.chatter)
     async def reward_gg(self, ctx: commands.Context) -> None:
         sound = random.choice(self.sounds["gg"])
         self.bot.overlay_queue.put(
             ("video", str(Path("sounds") / "gg" / f"{sound}.mp4"))
         )
         await ctx.redemption.fulfill(token_for=ctx.broadcaster)
+
+    @reward_gl.error
+    async def reward_gg_error(self, error: commands.CommandErrorPayload):
+        if isinstance(error.exception, commands.exceptions.CommandOnCooldown):
+            await error.context.redemption.refund(token_for=error.context.broadcaster)
+            await error.context.send(
+                f"{error.context.chatter.mention} évite de spammer les récompenses de chaîne owaCosmique"
+            )
 
     @commands.command()
     @commands.is_owner()
