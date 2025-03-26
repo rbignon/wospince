@@ -337,7 +337,7 @@ class Overlay:
         self.exit()
 
     def draw_window(self):
-        black = 0, 0, 0
+        black = 45, 30, 45
         self.screen.fill(black)
 
         if self.video is None:
