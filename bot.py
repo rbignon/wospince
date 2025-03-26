@@ -3,14 +3,16 @@ import logging
 import os
 import queue
 import random
+import socket
 import sqlite3
 import sys
-import time
+from datetime import datetime
 from pathlib import Path
 
 import asqlite
 import pygame
 import twitchio
+from pyvidplayer2 import Video
 from twitchio import eventsub
 from twitchio.ext import commands
 
@@ -21,8 +23,6 @@ except ImportError:
     sys.exit(1)
 
 LOGGER: logging.Logger = logging.getLogger("Bot")
-FPS = 30
-running = True
 
 
 class Bot(commands.Bot):
@@ -31,6 +31,7 @@ class Bot(commands.Bot):
     ) -> None:
         self.overlay_queue = overlay_queue
         self.token_database = token_database
+        self.uptime = datetime.now()
 
         super().__init__(
             client_id=CLIENT_ID,
@@ -122,10 +123,11 @@ class LaClasse(commands.Component):
         super().__init__()
 
         self.bot = bot
-        self.sounds = []
+        self.sounds = {}
 
-        for filename in os.listdir(Path("sounds") / "lca"):
-            self.sounds.append(filename.split(".")[0])
+        for kind in os.listdir("sounds"):
+            for filename in os.listdir(Path("sounds") / kind):
+                self.sounds.setdefault(kind, []).append(filename.split(".")[0])
 
     @commands.Component.listener()
     async def event_message(self, payload: twitchio.ChatMessage) -> None:
@@ -137,7 +139,7 @@ class LaClasse(commands.Component):
         """Affiche la liste des tags"""
         keywords = set()
         while len(keywords) < 5:
-            keywords.add(random.choice(self.sounds))
+            keywords.add(random.choice(self.sounds["lca"]))
 
         await ctx.reply(
             f'Tiens, voici quelques mots clefs que tu peux utiliser avec la récompense de chaîne : {", ".join(keywords)}'
@@ -157,29 +159,98 @@ class LaClasse(commands.Component):
     async def reward_laclasse(
         self, ctx: commands.Context, *, keyword: str | None = None
     ) -> None:
-        if keyword in self.sounds:
-            pygame.mixer.music.load(Path("sounds") / "lca" / f"{keyword}.mp3")
-            pygame.mixer.music.play()
-            await ctx.redemption.fulfill(token_for=ctx.broadcaster)
-        else:
+        if keyword is None:
+            await ctx.redemption.refund(token_for=ctx.broadcaster)
+            await ctx.send(
+                "Tu dois renseigner un mot clef. Utilise la commande !classe."
+            )
+            return
+
+        keyword = keyword.strip()
+
+        if keyword not in self.sounds["lca"]:
             await ctx.redemption.refund(token_for=ctx.broadcaster)
             await ctx.send(
                 f"Déso, mais il n'y a pas de référence à {keyword}. Utilise la commande !classe."
             )
+            return
+
+        pygame.mixer.music.load(Path("sounds") / "lca" / f"{keyword}.mp3")
+        pygame.mixer.music.play()
+        await ctx.redemption.fulfill(token_for=ctx.broadcaster)
+
+    @commands.reward_command(
+        id="5b6d55ef-c0cb-4b63-8dca-fb587bf4644f",
+        invoke_when=commands.RewardStatus.unfulfilled,
+    )
+    async def reward_gl(self, ctx: commands.Context) -> None:
+        sound = random.choice(self.sounds["gl"])
+        self.bot.overlay_queue.put(
+            ("video", str(Path("sounds") / "gl" / f"{sound}.mp4"))
+        )
+        await ctx.redemption.fulfill(token_for=ctx.broadcaster)
+
+    @commands.reward_command(
+        id="7e4e814b-3623-43a3-b59a-530400be0db7",
+        invoke_when=commands.RewardStatus.unfulfilled,
+    )
+    async def reward_fail(self, ctx: commands.Context) -> None:
+        sound = random.choice(self.sounds["fail"])
+        self.bot.overlay_queue.put(
+            ("video", str(Path("sounds") / "fail" / f"{sound}.mp4"))
+        )
+        await ctx.redemption.fulfill(token_for=ctx.broadcaster)
+
+    @commands.reward_command(
+        id="6091d470-96de-43ed-9be6-fcf17d145e81",
+        invoke_when=commands.RewardStatus.unfulfilled,
+    )
+    async def reward_gg(self, ctx: commands.Context) -> None:
+        sound = random.choice(self.sounds["gg"])
+        self.bot.overlay_queue.put(
+            ("video", str(Path("sounds") / "gg" / f"{sound}.mp4"))
+        )
+        await ctx.redemption.fulfill(token_for=ctx.broadcaster)
 
     @commands.command()
     @commands.is_owner()
     async def create_reward(self, ctx: commands.Context) -> None:
-        resp = await ctx.broadcaster.create_custom_reward(
-            f"New reward {random.randint(0, 99999)}", cost=10
-        )
-        await ctx.send(f"Created your redemption: {resp.id}")
+        """Create a new reward"""
+        name = f"New reward {random.randint(0,99999)}"
+        resp = await ctx.broadcaster.create_custom_reward(name, cost=10)
+        await ctx.send(f"Created {name}: {resp.id}")
+
+    @commands.command()
+    @commands.is_owner()
+    async def who(self, ctx: commands.Context) -> None:
+        await ctx.send(f"{socket.gethostname()} ({self.bot.uptime})")
+
+    @commands.command()
+    @commands.is_owner()
+    async def kill(self, ctx: commands.Context, who: str | None = None) -> None:
+        """Kill an instance of the bot"""
+        if socket.gethostname() == who:
+            await ctx.send(f"{who} has been killed.")
+            await self.bot.close()
+
+    @commands.command()
+    @commands.is_owner()
+    async def killall(self, ctx: commands.Context) -> None:
+        """Kill all bot instances"""
+        await ctx.send(f"{socket.gethostname()} has been killed.")
+        await self.bot.close()
 
 
 class Overlay:
+    FPS = 30
+    FramePerSec = pygame.time.Clock()
+
     def __init__(self, event_queue):
         self.event_queue = event_queue
         self.running = True
+        self.screen = None
+        self.videos_queue = []
+        self.video = None
 
     def init(self):
         pygame.init()
@@ -204,6 +275,9 @@ class Overlay:
 
     def handle_bot_event(self, event_type, *args):
         match event_type:
+            case "video":
+                print("new video", args)
+                self.videos_queue.append(args[0])
             case _:
                 print("handle_bot_event", event_type, args)
 
@@ -218,8 +292,7 @@ class Overlay:
                 print("handle_screen_event", event)
 
     def run(self):
-        screen = pygame.display.set_mode((1280, 720))
-        current_time = 0
+        self.screen = pygame.display.set_mode((1280, 720))
 
         while self.running:
             self.handle_bot_events()
@@ -227,23 +300,33 @@ class Overlay:
             for event in pygame.event.get():
                 self.handle_screen_event(event)
 
-            last_time, current_time = current_time, time.time()
-            # call usually takes  a bit longer than ideal for framerate, so subtract from next wait
-            # sleeptime = 1/FPS - delayed = 1/FPS - (now-last-1/FPS)
-            # also limit max delay to avoid issues with asyncio.sleep() returning immediately for negative values
-            waiting_time = max(
-                min(1 / FPS - (current_time - last_time - 1 / FPS), 1 / FPS), 0
-            )
-            time.sleep(waiting_time)  # tick
-
-            self.draw_window(screen)
+            self.draw_window()
+            self.FramePerSec.tick(self.FPS)
 
         self.exit()
 
-    def draw_window(self, screen):
+    def draw_window(self):
         black = 0, 0, 0
-        screen.fill(black)
-        pygame.display.flip()
+        self.screen.fill(black)
+
+        if self.video is None:
+            try:
+                self.video = Video(self.videos_queue.pop(0), use_pygame_audio=True)
+            except IndexError:
+                pass
+
+        if self.video is not None:
+            try:
+                self.video.draw(self.screen, (0, 0))
+            except EOFError:
+                logging.exception("Unable to draw video")
+                self.video.active = False
+
+            if not self.video.active:
+                self.video.close()
+                self.video = None
+
+        pygame.display.update()
 
 
 async def main() -> None:
