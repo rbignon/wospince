@@ -1,5 +1,5 @@
-git+https://github.com/PythonistaGuild/TwitchIO.git
-twitchio[starlette]
-pygame
 asqlite
+git+https://github.com/PythonistaGuild/TwitchIO.git
+pygame
 pyvidplayer2
+twitchio[starlette]

@@ -6,9 +6,11 @@ import random
 import socket
 import sqlite3
 import sys
+import time
 from datetime import datetime
 from pathlib import Path
 
+import aiohttp
 import asqlite
 import pygame
 import twitchio
@@ -62,6 +64,7 @@ class Bot(commands.Bot):
         LOGGER.info("Setting up hooks")
 
         await self.add_component(LaClasse(self))
+        await self.add_component(Speedrun(self))
 
         subscription = eventsub.ChatMessageSubscription(
             broadcaster_user_id=OWNER_ID, user_id=BOT_ID
@@ -116,6 +119,49 @@ class Bot(commands.Bot):
 
     async def event_ready(self) -> None:
         LOGGER.info("Successfully logged in as: %s", self.bot_id)
+
+
+def formattime(t):
+    if t > 60000:
+        return f"{time.strftime('%M:%S', time.gmtime(t / 1000))}"
+    else:
+        return f"{int(t / 1000)}.{t % 1000 // 100}s"
+
+
+class Speedrun(commands.Component):
+    URL = "https://d1qsrp2avfthuv.cloudfront.net/wospins/eldenring/twogods/history-gametime.json"
+
+    def __init__(self, bot: Bot):
+        super().__init__()
+
+        self.bot = bot
+
+    @commands.command(aliases=["splits"])
+    @commands.cooldown(rate=1, per=30, key=commands.BucketType.channel)
+    async def timesaves(self, ctx: commands.Context) -> None:
+        async with aiohttp.ClientSession() as session:
+            async with session.get(self.URL) as resp:
+                # ignore check of Content-Type, as therun.gg returns 'application/octet-stream'.
+                doc = await resp.json(content_type=None)
+
+                splits = [
+                    {
+                        "name": s["name"],
+                        "timesave": (
+                            int(s["single"]["time"])
+                            - int(s["single"]["bestPossibleTime"])
+                        ),
+                    }
+                    for s in doc["splits"]
+                    if s["single"]["time"] not in ("", "NaN")
+                ]
+                splits = sorted(splits, key=lambda s: s["timesave"], reverse=True)[:10]
+
+                timesaves = [
+                    f'{s["name"]} ({formattime(s["timesave"])})' for s in splits
+                ]
+
+                await ctx.send(f"Timesaves: {', '.join(timesaves)}")
 
 
 class LaClasse(commands.Component):
@@ -247,7 +293,7 @@ class LaClasse(commands.Component):
     @commands.is_owner()
     async def create_reward(self, ctx: commands.Context) -> None:
         """Create a new reward"""
-        name = f"New reward {random.randint(0,99999)}"
+        name = f"New reward {random.randint(0, 99999)}"
         resp = await ctx.broadcaster.create_custom_reward(name, cost=10)
         await ctx.send(f"Created {name}: {resp.id}")
 
