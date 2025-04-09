@@ -140,7 +140,7 @@ class Speedrun(commands.Component):
     @commands.cooldown(rate=1, per=30, key=commands.BucketType.channel)
     async def timesaves(self, ctx: commands.Context) -> None:
         async with aiohttp.ClientSession() as session:
-            async with session.get(self.URL) as resp:
+            async with session.get(self.URL, params={'version': datetime.now().isoformat()}) as resp:
                 # ignore check of Content-Type, as therun.gg returns 'application/octet-stream'.
                 doc = await resp.json(content_type=None)
 
